@@ -25,8 +25,11 @@ Boot and React/TypeScript. The domain model, service layer, and a full
 REST API (list/create/update/delete) are in place for all four resources
 (Roles, Resources, Tasks, Projects), backed by an in-memory store. Domain
 changes are published as Kafka events. A React frontend covers all four
-list views plus a Dashboard and an AI Chat screen; a couple of pieces on
-both sides are still mid-build (see "Planned functionality").
+list views plus a Dashboard and an AI Chat screen wired to OpenAI. A
+separate internal Dev Assistant (chat, autonomous agent, and a task board)
+helps the team track development work on CostCompass itself, backed by
+Postgres. A couple of pieces on both sides are still mid-build (see
+"Planned functionality").
 
 ## Domain model
 
@@ -54,13 +57,46 @@ event (`RoleEvent`, `TaskEvent`, ...) to a dedicated Kafka topic
 (`role-events`, `task-events`, ...); the equivalent event types exist for
 Resources and Projects but aren't wired into their services yet.
 
+This domain model is still backed by an in-memory store — see "Planned
+functionality".
+
+## Dev Assistant (internal tooling)
+
+Separate from the customer-facing AI Chat, the team has an internal
+development assistant for tracking work on CostCompass itself, backed by
+its own Postgres database:
+
+- **Dev Chat** (`/dev-chat` in the frontend, `POST
+  /api/costcompass/dev/assistant/request`) — remembers decisions, bugs and
+  notes across sessions, and manages structured development tasks (title,
+  status, type, assignee). Can also read the whole codebase (backend and
+  frontend) on request to suggest improvements, or to verify whether an
+  existing task is actually done instead of trusting the stored status
+  blindly.
+- **Autonomous agent** — runs on a schedule, scans unresolved bug/task
+  memories, searches the codebase for the relevant file(s), creates
+  tracked tasks automatically, and marks the source memory resolved so it
+  never repeats itself. Can be triggered manually for testing via `POST
+  /api/costcompass/dev/agent/run`.
+- **Dev Tasks board** (`/dev-tasks` in the frontend) — a read-only,
+  Jira-style board showing all tasks grouped by status.
+
 ## How to run
 
 **Prerequisites:** a JDK compatible with Spring Boot 4.1.0 (Java 17–26;
 this project targets Java 25), Docker, and Node.js. No separate Maven
 install is needed — the project ships with the Maven Wrapper.
 
-1. **Start Kafka** (from the project root)
+1. **Start Kafka and Postgres** (from the project root)
+
+   Postgres needs a password before its first start. Create a `.env` file
+   next to `docker-compose.yml` (add it to `.gitignore` — never commit it):
+
+   ```
+   POSTGRES_PASSWORD=your-local-password
+   ```
+
+   Then:
 
    ```bash
    docker compose up -d
@@ -79,16 +115,23 @@ install is needed — the project ships with the Maven Wrapper.
    The API is served at `http://localhost:8080/api/costcompass`. Kafka
    connection settings are in `src/main/resources/application.properties`.
 
-   **AI Chat (OpenAI):** the AI Chat feature calls OpenAI, so it needs an
-   API key. Create `src/main/resources/application-local.properties`
-   (add it to `.gitignore` — it holds a real secret and must never be
-   committed) with:
+   **Local secrets and dev-tooling paths:** the AI Chat feature calls
+   OpenAI, and the Dev Assistant needs a database connection and the
+   absolute paths to your source folders. Create
+   `src/main/resources/application-local.properties` (add it to
+   `.gitignore` — it holds real secrets and must never be committed) with:
 
    ```properties
    spring.ai.openai.api-key=your-api-key-here
+   spring.datasource.password=your-local-password
+   dev.source-path=/absolute/path/to/src/main/java
+   dev.frontend-source-path=/absolute/path/to/frontend/src
    ```
 
-   then start the backend with the `local` profile active so that file
+   `spring.datasource.password` must match the `POSTGRES_PASSWORD` you set
+   in `.env`.
+
+   Then start the backend with the `local` profile active so that file
    gets picked up:
 
    ```bash
@@ -130,24 +173,29 @@ java -jar target/costcompass-0.0.1-SNAPSHOT.jar
   Projects
 - Kafka domain events for Roles and Tasks (create/update/delete)
 - React + TypeScript frontend: list views for all four resources, a
-  Dashboard with live KPIs, and an AI Chat screen (UI only so far)
+  Dashboard with live KPIs, and an AI Chat screen wired to OpenAI via
+  Spring AI
+- Internal Dev Assistant: chat with persistent memory, structured
+  development tasks, an autonomous background agent, and a task board
+  (Postgres-backed)
 
 ## Planned functionality
 
 - Kafka events for Resources and Projects (event types exist, not yet
   published from their services)
-- AI-assisted layer to help reason about a proposed price for a given set
-  of tasks and resources — a first Spring AI + Ollama endpoint exists as a
-  spike (`scratch/AiTestController`), not yet wired to the AI Chat screen
-- Persistent storage (database, replacing the in-memory store)
+- Persistent storage for the core domain (database, replacing the
+  in-memory store for Roles/Resources/Tasks/Projects) — only the internal
+  Dev Assistant is Postgres-backed so far
+- Interactive Dev Tasks board (drag-and-drop status changes; currently
+  read-only)
 - Automated tests (JUnit 5 / Mockito)
 
 ## Tech stack
 
 **Backend:** Java 25, Spring Boot 4, Spring for Apache Kafka, Spring AI
-(Ollama), Maven, JUnit 5 / Mockito (planned)
+(OpenAI), Maven, JUnit 5 / Mockito (planned)
 
 **Frontend:** React, TypeScript, Tailwind CSS, Vite
 
 **Infrastructure:** Apache Kafka (Docker Compose, single-broker KRaft
-setup — no separate ZooKeeper needed)
+setup — no separate ZooKeeper needed), PostgreSQL (Docker Compose)
