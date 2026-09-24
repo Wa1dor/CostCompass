@@ -20,49 +20,99 @@ proposal.
 
 ## Status
 
-🚧 Early stage — built as a learning project in Java/Spring Boot. The
-domain model is in place; the service layer and REST API are not built
-yet.
+🚧 Under active development, built as a learning project in Java/Spring
+Boot and React/TypeScript. The domain model, service layer, and a full
+REST API (list/create/update/delete) are in place for all four resources
+(Roles, Resources, Tasks, Projects), backed by an in-memory store. Domain
+changes are published as Kafka events. A React frontend covers all four
+list views plus a Dashboard and an AI Chat screen; a couple of pieces on
+both sides are still mid-build (see "Planned functionality").
 
 ## Domain model
 
 - **`RoleModel`** — a job function or specialization (e.g. "Backend
   Developer"), with a name and description.
 - **`ResourceModel`** — a resource that can do work: a set of roles, an
-  hourly price, and a type (`HUMAN` or `LLM`, nested inside `ResourceModel`
-  since it's never meaningful on its own).
+  hourly price, and a type (`HUMAN` or `AI_DIRECTED`, nested inside
+  `ResourceModel` since it's never meaningful on its own).
 - **`TaskModel`** — a single piece of work: a description, the resource
   assigned to it, an estimated execution time and an estimated
   verification time. Its `price()` is calculated on demand
   (`hourlyPrice × total time`), not stored, so it can never drift out of
   sync with the underlying numbers.
 - **`ProjectModel`** — a customer engagement: a customer name, a project
-  name, and a growing list of `Task`s (added via `addTask(...)`). Its
-  `totalPrice()` is likewise calculated on demand by summing every task's
+  name, and a growing list of `TaskModel`s (added via `addTask(...)`). Its
+  `price()` is likewise calculated on demand by summing every task's
   price.
 
-`RoleModel` and `ResourceModel` are records — accurately immutable
-snapshots. `ProjectModel` is a regular mutable class, since its task list
-is meant to grow over the course of a planning session.
+`RoleModel`, `ResourceModel` and `TaskModel` are records — accurately
+immutable snapshots. `ProjectModel` is a regular mutable class, since its
+task list is meant to grow over the course of a planning session.
+
+Every create/update/delete on a Role or Task is published as a domain
+event (`RoleEvent`, `TaskEvent`, ...) to a dedicated Kafka topic
+(`role-events`, `task-events`, ...); the equivalent event types exist for
+Resources and Projects but aren't wired into their services yet.
 
 ## How to run
 
 **Prerequisites:** a JDK compatible with Spring Boot 4.1.0 (Java 17–26;
-this project targets Java 25). No separate Maven install is needed — the
-project ships with the Maven Wrapper.
+this project targets Java 25), Docker, and Node.js. No separate Maven
+install is needed — the project ships with the Maven Wrapper.
 
-From the project root:
+1. **Start Kafka** (from the project root)
 
-```bash
-# macOS/Linux
-./mvnw spring-boot:run
+   ```bash
+   docker compose up -d
+   ```
 
-# Windows (PowerShell)
-.\mvnw.cmd spring-boot:run
-```
+2. **Run the backend**
 
-The application starts on `http://localhost:8080`. There are no REST
-endpoints exposed yet — see "Planned functionality" below.
+   ```bash
+   # macOS/Linux
+   ./mvnw spring-boot:run
+
+   # Windows (PowerShell)
+   .\mvnw.cmd spring-boot:run
+   ```
+
+   The API is served at `http://localhost:8080/api/costcompass`. Kafka
+   connection settings are in `src/main/resources/application.properties`.
+
+   **AI Chat (OpenAI):** the AI Chat feature calls OpenAI, so it needs an
+   API key. Create `src/main/resources/application-local.properties`
+   (add it to `.gitignore` — it holds a real secret and must never be
+   committed) with:
+
+   ```properties
+   spring.ai.openai.api-key=your-api-key-here
+   ```
+
+   then start the backend with the `local` profile active so that file
+   gets picked up:
+
+   ```bash
+   # macOS/Linux
+   ./mvnw spring-boot:run -Dspring-boot.run.profiles=local
+
+   # Windows (PowerShell) — quote the whole -D argument; otherwise
+   # PowerShell can split it into two tokens and Maven fails with
+   # "Unknown lifecycle phase"
+   .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=local"
+   ```
+
+3. **Run the frontend** (from `frontend/`)
+
+   ```bash
+   npm install
+   npm run dev
+   ```
+
+   Served at `http://localhost:5173` by default; CORS for that origin is
+   already configured on the backend (`WebConfig`).
+
+Java source changes need a rebuild + restart to take effect — there's no
+hot reload configured (e.g. Spring DevTools) yet.
 
 ### Building a jar
 
@@ -76,20 +126,28 @@ java -jar target/costcompass-0.0.1-SNAPSHOT.jar
 - Domain model: `RoleModel`, `ResourceModel`, `TaskModel`, `ProjectModel`
 - Calculated pricing per task and per project (no stored/derived-data
   drift)
+- REST API (list/create/update/delete) for Roles, Resources, Tasks and
+  Projects
+- Kafka domain events for Roles and Tasks (create/update/delete)
+- React + TypeScript frontend: list views for all four resources, a
+  Dashboard with live KPIs, and an AI Chat screen (UI only so far)
 
 ## Planned functionality
 
-- Service layer for storing and retrieving resources, tasks, and projects
-  (in-memory to start, same pattern as TestPulse)
-- REST API for creating/listing resources and building up a project's
-  task list
-- An AI-assisted layer to help reason about a proposed price for a given
-  set of tasks and resources (later phase — ties into the AI track)
+- Kafka events for Resources and Projects (event types exist, not yet
+  published from their services)
+- AI-assisted layer to help reason about a proposed price for a given set
+  of tasks and resources — a first Spring AI + Ollama endpoint exists as a
+  spike (`scratch/AiTestController`), not yet wired to the AI Chat screen
 - Persistent storage (database, replacing the in-memory store)
 - Automated tests (JUnit 5 / Mockito)
 
 ## Tech stack
 
-- Java / Spring Boot
-- Maven
-- JUnit 5 / Mockito (planned)
+**Backend:** Java 25, Spring Boot 4, Spring for Apache Kafka, Spring AI
+(Ollama), Maven, JUnit 5 / Mockito (planned)
+
+**Frontend:** React, TypeScript, Tailwind CSS, Vite
+
+**Infrastructure:** Apache Kafka (Docker Compose, single-broker KRaft
+setup — no separate ZooKeeper needed)
